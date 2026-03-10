@@ -187,12 +187,30 @@ def extract_skills(zip_path: Path, target_dir: Path) -> list[Path]:
     installed_dirs = []
 
     with zipfile.ZipFile(zip_path, "r") as zf:
+        top_level_entries = set()
         for member in zf.namelist():
+            if member:
+                top_name = member.split("/", 1)[0]
+                if top_name and top_name != "__MACOSX":
+                    top_level_entries.add(top_name)
             member_path = (target_dir / member).resolve()
             if not str(member_path).startswith(str(target_dir.resolve())):
                 raise ValueError(f"检测到 Zip Slip 攻击，拒绝解压：{member}")
 
         zf.extractall(target_dir)
+
+    if top_level_entries == {"skills"}:
+        skills_root = target_dir / "skills"
+        if skills_root.is_dir():
+            for child in list(skills_root.iterdir()):
+                dest = target_dir / child.name
+                if dest.exists():
+                    if dest.is_dir():
+                        shutil.rmtree(dest)
+                    else:
+                        dest.unlink()
+                child.rename(dest)
+            skills_root.rmdir()
 
     for entry in target_dir.iterdir():
         if entry.is_dir():
