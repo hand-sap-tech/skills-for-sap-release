@@ -117,7 +117,7 @@ def decrypt_file(enc_path: Path, hex_key: str, out_path: Path) -> None:
 
     salt = data[8:16]
     ciphertext = data[16:]
-    key_material = bytes.fromhex(hex_key)
+    key_material = hex_key.encode("utf-8")
 
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
