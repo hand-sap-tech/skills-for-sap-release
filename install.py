@@ -61,14 +61,16 @@ def get_tool_paths() -> dict[str, Path]:
         }
 
 
-def parse_encoded_key_string(encoded: str) -> tuple[str, str, str, str, str | None]:
+def parse_encoded_key_string(
+    encoded: str,
+) -> tuple[str, str, str, str, str | None, str]:
     try:
         json_bytes = base64.b64decode(encoded)
         payload = json.loads(json_bytes.decode("utf-8"))
     except Exception as e:
         raise ValueError(f"Key string Base64/JSON 解码失败：{e}") from e
 
-    required_fields = ("EmpName", "EmpNO", "EncryptKey", "ContentURL")
+    required_fields = ("EmpName", "EmpNO", "EncryptKey", "ContentURL", "SkillName")
     for field in required_fields:
         value = payload.get(field)
         if not isinstance(value, str) or not value:
@@ -78,6 +80,10 @@ def parse_encoded_key_string(encoded: str) -> tuple[str, str, str, str, str | No
     employee_id = payload["EmpNO"]
     hex_key = payload["EncryptKey"]
     release_url = payload["ContentURL"]
+    skill_name = payload["SkillName"]
+    skill_dir_name = skill_name.split("/")[-1].strip()
+    if not skill_dir_name:
+        raise ValueError("Key string 字段 SkillName 格式错误。")
 
     package_version = None
     version_value = payload.get("Version")
@@ -87,7 +93,7 @@ def parse_encoded_key_string(encoded: str) -> tuple[str, str, str, str, str | No
     if len(hex_key) != 64 or not all(c in "0123456789abcdefABCDEF" for c in hex_key):
         raise ValueError("hex_key 格式错误：期望 64 字符 hex 字符串。")
 
-    return name, employee_id, hex_key, release_url, package_version
+    return name, employee_id, hex_key, release_url, package_version, skill_dir_name
 
 
 def download_release(url: str, dest: Path) -> None:
@@ -182,7 +188,11 @@ def select_install_target() -> Path:
     return selected
 
 
-def extract_skills(zip_path: Path, target_dir: Path) -> list[Path]:
+def extract_skills(
+    zip_path: Path,
+    target_dir: Path,
+    skill_dir_name: str,
+) -> list[Path]:
     target_dir.mkdir(parents=True, exist_ok=True)
     installed_dirs = []
 
@@ -211,6 +221,23 @@ def extract_skills(zip_path: Path, target_dir: Path) -> list[Path]:
                         dest.unlink()
                 child.rename(dest)
             skills_root.rmdir()
+
+    if "SKILL.md" in top_level_entries:
+        skill_root = target_dir / skill_dir_name
+        skill_root.mkdir(parents=True, exist_ok=True)
+
+        for entry_name in sorted(top_level_entries):
+            source = target_dir / entry_name
+            if source == skill_root or not source.exists():
+                continue
+
+            dest = skill_root / source.name
+            if dest.exists():
+                if dest.is_dir():
+                    shutil.rmtree(dest)
+                else:
+                    dest.unlink()
+            source.rename(dest)
 
     for entry in target_dir.iterdir():
         if entry.is_dir():
@@ -258,9 +285,14 @@ def main() -> int:
     )
 
     try:
-        name, employee_id, hex_key, release_url, package_version_from_key = (
-            parse_encoded_key_string(args.key)
-        )
+        (
+            name,
+            employee_id,
+            hex_key,
+            release_url,
+            package_version_from_key,
+            skill_dir_name,
+        ) = parse_encoded_key_string(args.key)
     except ValueError as e:
         console.print(f"[red]✗ Key 解析失败：{e}[/red]")
         return 1
@@ -288,7 +320,7 @@ def main() -> int:
 
         console.print(f"[cyan]正在安装到[/cyan] {target_dir}")
         try:
-            installed = extract_skills(zip_file, target_dir)
+            installed = extract_skills(zip_file, target_dir, skill_dir_name)
         except Exception as e:
             console.print(f"[red]✗ 解压失败：{e}[/red]")
             return 1
